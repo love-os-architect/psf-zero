@@ -1,0 +1,11 @@
+cff-version: 1.2.0
+message: "If you use this software in your research, please cite it as below."
+authors:
+  - family-names: "Architect"
+    given-names: "The"
+title: "PSF-Zero: Zero-Dissipation Quantum Control Kernel for Qiskit"
+version: 1.0.0
+date-released: 2026-03-21
+url: "https://github.com/YOUR_USERNAME/psf-zero"
+license: AGPL-3.0-or-later
+abstract: "A Qiskit TransformationPass that implements Projective Spherical Filtering (/0 clamp) and S3 minimal arc optimization to synthesize highly robust, low-dissipation 2-qubit unitary circuits."
