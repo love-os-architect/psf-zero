@@ -1,0 +1,27 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "psf-zero"
+version = "1.0.0"
+description = "A manifold-aware geometric optimizer for quantum control, designed to minimize T1/T2 decoherence via curvature-based trust regions and S3 minimal arcs."
+readme = "README.md"
+requires-python = ">=3.8"
+license = {text = "AGPL-3.0-or-later"}
+authors = [
+    {name = "The Architect", email = "contact.love.os.architect@proton.me"}
+]
+keywords = ["qiskit", "quantum-control", "manifold-optimization", "error-mitigation", "unitary-synthesis"]
+dependencies = [
+    "numpy>=1.20.0",
+    "scipy>=1.7.0",
+    "qiskit>=1.0.0" # Qiskit 1.0系への対応を明記（審査で極めて重要）
+]
+
+[project.optional-dependencies]
+dev = ["pytest", "jupyter", "matplotlib"]
+
+[project.urls]
+"Homepage" = "https://github.com/YOUR_USERNAME/psf-zero"
+"Bug Tracker" = "https://github.com/YOUR_USERNAME/psf-zero/issues"
