@@ -24,4 +24,7 @@ dev = ["pytest", "jupyter", "matplotlib"]
 
 [project.urls]
 "Homepage" = "https://github.com/YOUR_USERNAME/psf-zero"
+
 "Bug Tracker" = "https://github.com/YOUR_USERNAME/psf-zero/issues"
+[project.entry-points."qiskit.unitary_synthesis"]
+psf_zero = "psf_synthesis:PSFUnitarySynthesisPlugin"
