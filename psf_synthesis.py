@@ -1,14 +1,11 @@
-# psf_synthesis.py
 from __future__ import annotations
 import numpy as np
 from dataclasses import dataclass
 from typing import Tuple, Optional
 
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import RZZGate, RXGate, RYGate, RZGate, UnitaryGate
-from qiskit.dagcircuit import DAGCircuit
-from qiskit.transpiler import TransformationPass
-from qiskit.converters import circuit_to_dag
+from qiskit.circuit.library import RZZGate, RXGate, RYGate, RZGate
+from qiskit.transpiler.passes.synthesis.plugin import UnitarySynthesisPlugin
 
 # -----------------------------------------
 # === Core Math: /0 Projection & Unitaries
@@ -119,7 +116,6 @@ class PSFHybridSynthesizer:
         self.m2 = np.zeros(n, dtype=float)
         self.step_count = 0
 
-    # ----- flatten helpers -----
     def _flat(self) -> np.ndarray:
         return np.concatenate([self.params_angles.ravel(), self.taus.ravel()])
 
@@ -128,7 +124,6 @@ class PSFHybridSynthesizer:
         self.params_angles = vec[:nb].reshape(self.h.m + 1, 2, 3)
         self.taus = vec[nb:]
 
-    # ----- analytic subgradient for H/TV -----
     def _analytic_htv_grad(self) -> np.ndarray:
         # L1 part
         g_angles = np.sign(self.params_angles)
@@ -162,7 +157,6 @@ class PSFHybridSynthesizer:
 
         return np.concatenate([g_angles.ravel(), g_taus.ravel()])
 
-    # ----- parameter-shift gradient for fidelity + regularizers -----
     def _ps_grad(self, U_target: np.ndarray) -> np.ndarray:
         base = self._flat().copy()
         nb_angles = (self.h.m + 1) * 2 * 3
@@ -198,11 +192,9 @@ class PSFHybridSynthesizer:
         # H/TV analytic subgradient
         grad += self._analytic_htv_grad()
 
-        # restore base
         self._set_flat(base)
         return grad
 
-    # ----- Adam update with cosine LR & step clamp -----
     def _adam_step(self, g: np.ndarray, lr: float):
         self.step_count += 1
         b1, b2 = self.h.betas
@@ -212,17 +204,14 @@ class PSFHybridSynthesizer:
         m2_hat = self.m2 / (1 - b2**self.step_count)
         step = lr * m1_hat / (np.sqrt(m2_hat) + self.h.eps_adam)
 
-        # optional gentle global step clamp (prevents wild jumps)
-        norm = np.linalg.norm(step)
-        if norm > self.h.step_clip:
-            step *= (self.h.step_clip / (norm + 1e-12))
+        if np.linalg.norm(step) > self.h.step_clip:
+            step *= (self.h.step_clip / (np.linalg.norm(step) + 1e-12))
         return step
 
     def run(self, U_target: np.ndarray, tol: float = 1e-7):
         lr0 = self.h.lr
         last_loss = None
         for t in range(self.h.iters):
-            # Cosine annealing
             lr = max(1e-4, lr0 * (0.5 * (1 + np.cos(np.pi * t / self.h.iters))))
             grad = self._ps_grad(U_target)
             step = self._adam_step(grad, lr)
@@ -231,7 +220,6 @@ class PSFHybridSynthesizer:
             vec -= step
             self._set_flat(vec)
 
-            # Early stop (optional)
             if (t % 5) == 0:
                 U = compose_circuit_unitary(self.params_angles, self.taus)
                 loss = 1.0 - F_avg(U, U_target, self.h.use_polar_fix)
@@ -257,26 +245,56 @@ class PSFHybridSynthesizer:
         return qc
 
 # -----------------------------------------
-# === Qiskit Transpiler Pass
+# === Qiskit Unitary Synthesis Plugin
 # -----------------------------------------
 
-class PSFGateSynthesis(TransformationPass):
+class PSFUnitarySynthesisPlugin(UnitarySynthesisPlugin):
     """
-    Qiskit Transpiler Pass:
-      Replaces 2Q UnitaryGate nodes with PSF-optimized native circuits.
+    A UnitarySynthesisPlugin implementation for PSF-Zero.
+    Numerically synthesizes 2Q unitaries into parameterized local blocks
+    and RZZ entanglers using bounded projective regularization.
     """
-    def __init__(self, hyper: Optional[PSFHyper] = None):
-        super().__init__()
-        self.hyper = hyper or PSFHyper()
 
-    def run(self, dag: DAGCircuit) -> DAGCircuit:
-        new_dag = dag.copy()
-        for node in list(new_dag.op_nodes()):
-            if isinstance(node.op, UnitaryGate) and node.op.num_qubits == 2:
-                U_target = np.asarray(node.op.to_matrix(), dtype=complex)
-                synth = PSFHybridSynthesizer(self.hyper)
-                synth.run(U_target)
-                new_dag.substitute_node_with_dag(
-                    node, circuit_to_dag(synth.as_qiskit()), wires=node.qargs
-                )
-        return new_dag
+    @property
+    def max_qubits(self) -> int:
+        return 2
+
+    @property
+    def min_qubits(self) -> int:
+        return 2
+
+    @property
+    def supported_bases(self) -> list[list[str]]:
+        return [['rx', 'ry', 'rz', 'rzz']]
+
+    @property
+    def supports_basis_exploration(self) -> bool:
+        return False
+
+    @property
+    def supports_coupling_map(self) -> bool:
+        return False
+
+    @property
+    def supports_natural_direction(self) -> bool:
+        return False
+
+    @property
+    def supports_pulse_optimize(self) -> bool:
+        return False
+
+    @property
+    def supports_target(self) -> bool:
+        return False
+
+    def run(self, unitary: np.ndarray, **options) -> QuantumCircuit:
+        """
+        Synthesize a unitary matrix into a QuantumCircuit.
+        """
+        hyper = PSFHyper()
+        synth = PSFHybridSynthesizer(hyper)
+        
+       
+        synth.run(unitary)
+        
+        return synth.as_qiskit()
