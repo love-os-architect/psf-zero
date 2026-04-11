@@ -1,12 +1,9 @@
 from __future__ import annotations
 import numpy as np
-import dataclasses
-from dataclasses import dataclass
-from typing import Optional
-from scipy.linalg import expm, logm
+from dataclasses import dataclass, fields
+from scipy.linalg import expm
 
 from qiskit import QuantumCircuit
-from qiskit.circuit.library import RZZGate, RXGate, RYGate, RZGate
 from qiskit.transpiler.passes.synthesis.plugin import UnitarySynthesisPlugin
 
 # =========================================================
@@ -18,23 +15,24 @@ Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
 Z = np.array([[1, 0], [0, -1]], dtype=complex)
 
 # =========================================================
-# Projective (/0) tools
+# Projective tools (Minimized damping)
 # =========================================================
 def projective_reg(x: np.ndarray) -> np.ndarray:
     return x / np.sqrt(1.0 + x**2)
 
 def projective_grad(x: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + x**2) ** 1.5
+    return 1.0 / (1.0 + x**2)**1.5
 
 # =========================================================
-# Quantum blocks
+# Blocks
 # =========================================================
 def local_block(angles: np.ndarray) -> np.ndarray:
     U = np.eye(4, dtype=complex)
     paulis = [X, Y, Z]
     for q in range(2):
         for a in range(3):
-            Uq = expm(-1j * angles[q,a] / 2 * paulis[a])
+            theta = angles[q, a]
+            Uq = expm(-1j * theta / 2 * paulis[a])
             U = np.kron(Uq, I) @ U if q == 0 else np.kron(I, Uq) @ U
     return U
 
@@ -43,40 +41,46 @@ def rzz_block(tau: float) -> np.ndarray:
 
 def compose_unitary(angles: np.ndarray, taus: np.ndarray) -> np.ndarray:
     U = np.eye(4, dtype=complex)
-    for l in range(len(taus)):
+    m = len(taus)
+    for l in range(m):
         U = local_block(angles[l]) @ U
         U = rzz_block(taus[l]) @ U
-    return local_block(angles[-1]) @ U
+    U = local_block(angles[-1]) @ U
+    return U
 
-# =========================================================
-# Metrics
-# =========================================================
 def F_avg(U: np.ndarray, V: np.ndarray) -> float:
     d = 4
-    return float((np.abs(np.trace(U.conj().T @ V))**2 + d) / (d * (d + 1)))
+    tr = np.trace(U.conj().T @ V)
+    return float((np.abs(tr)**2 + d) / (d * (d + 1)))
 
 # =========================================================
 # Parameter-shift gradient
 # =========================================================
-def parameter_shift_grad(angles: np.ndarray, taus: np.ndarray, U_target: np.ndarray) -> tuple[np.ndarray, np.ndarray]:
+def parameter_shift_grad(angles: np.ndarray, taus: np.ndarray, U_target: np.ndarray):
     g_a = np.zeros_like(angles)
     g_t = np.zeros_like(taus)
     shift = np.pi / 2.0
+    m = len(taus)
 
-    for l in range(len(angles)):
+    # Angles
+    for l in range(m + 1):
         for q in range(2):
             for a in range(3):
-                Ap = angles.copy(); Am = angles.copy()
-                Ap[l,q,a] += shift
-                Am[l,q,a] -= shift
-                g_a[l,q,a] = -0.5 * (
+                Ap = angles.copy()
+                Am = angles.copy()
+                Ap[l, q, a] += shift
+                Am[l, q, a] -= shift
+                g_a[l, q, a] = -0.5 * (
                     F_avg(compose_unitary(Ap, taus), U_target) -
                     F_avg(compose_unitary(Am, taus), U_target)
                 )
 
-    for l in range(len(taus)):
-        tp = taus.copy(); tm = taus.copy()
-        tp[l] += shift; tm[l] -= shift
+    # Taus
+    for l in range(m):
+        tp = taus.copy()
+        tm = taus.copy()
+        tp[l] += shift
+        tm[l] -= shift
         g_t[l] = -0.5 * (
             F_avg(compose_unitary(angles, tp), U_target) -
             F_avg(compose_unitary(angles, tm), U_target)
@@ -85,107 +89,110 @@ def parameter_shift_grad(angles: np.ndarray, taus: np.ndarray, U_target: np.ndar
     return g_a, g_t
 
 # =========================================================
-# KAK-style init (CNOT / iSWAP friendly)
+# KAK-style initialization
 # =========================================================
-def kak_init(m: int) -> tuple[np.ndarray, np.ndarray]:
-    angles = np.zeros((m+1, 2, 3))
-    taus = np.zeros(m)
-    taus[:] = np.pi / 4.0 / m   # total entangling ≈ π/4
+def kak_init(m: int):
+    angles = np.zeros((m + 1, 2, 3))
+    taus = np.full(m, np.pi / 4 / m)  # Total entangling ≈ π/4
     return angles, taus
 
 # =========================================================
-# Hyperparameters
+# Hyperparameters (Optimal Balance)
 # =========================================================
 @dataclass
 class PSFHyper:
-    m: int = 4
-    iters: int = 250
-    lr: float = 0.08
-    alpha_proj: float = 0.003
-    beta_L1: float = 0.0
-    beta_TV: float = 0.0
-    beta_geo: float = 0.0
-    proj_every: int = 10
-    seeds: int = 5
-    tau_cal: Optional[np.ndarray] = None # Added for compatibility, though unused in Ultimate
+    m: int = 5
+    iters: int = 400
+    lr_base: float = 0.15
+    alpha_proj: float = 0.0005   # Minimal damping
+    proj_every: int = 30
+    seeds: int = 6
 
 # =========================================================
-# Synthesizer (ULTIMATE)
+# ULTIMATE OPTIMAL SYNTHESIZER
 # =========================================================
-class PSFHybridSynthesizerUltimate:
+class PSFHybridSynthesizerOptimal:
     def __init__(self, hyper: PSFHyper):
         self.hyper = hyper
         self.angles = None
         self.taus = None
 
     def run(self, U_target: np.ndarray) -> float:
-        best = np.inf
-        
+        best_inf = float('inf')
+
         for seed in range(self.hyper.seeds):
             rng = np.random.default_rng(seed)
             angles, taus = kak_init(self.hyper.m)
-            angles += rng.normal(scale=0.3, size=angles.shape)
-            taus   += rng.normal(scale=0.2, size=taus.shape)
+            angles += rng.normal(scale=0.4, size=angles.shape)
+            taus += rng.normal(scale=0.25, size=taus.shape)
 
-            seed_best = np.inf
-            seed_params = None
+            seed_best_inf = float('inf')
+            seed_best_params = None
 
             for step in range(self.hyper.iters):
+                # Cosine annealing learning rate
+                lr = self.hyper.lr_base * 0.5 * (1 + np.cos(np.pi * step / self.hyper.iters))
                 U = compose_unitary(angles, taus)
-                loss = 1.0 - F_avg(U, U_target)
+                inf = 1.0 - F_avg(U, U_target)
 
-                if loss < seed_best:
-                    seed_best = loss
-                    seed_params = (angles.copy(), taus.copy())
+                if inf < seed_best_inf:
+                    seed_best_inf = inf
+                    seed_best_params = (angles.copy(), taus.copy())
 
                 g_a, g_t = parameter_shift_grad(angles, taus, U_target)
 
+                # Minimal projective damping
                 g_a *= self.hyper.alpha_proj * projective_grad(angles)
                 g_t *= self.hyper.alpha_proj * projective_grad(taus)
 
-                angles -= self.hyper.lr * g_a
-                taus   -= self.hyper.lr * g_t
+                angles -= lr * g_a
+                taus -= lr * g_t
 
-                if step % self.hyper.proj_every == 0:
+                # Thin out projections early on, enforce continuously in the end-game
+                if step % self.hyper.proj_every == 0 or step > self.hyper.iters * 0.75:
                     angles = projective_reg(angles)
-                    taus   = projective_reg(taus)
+                    taus = projective_reg(taus)
 
-            if seed_best < best:
-                best = seed_best
-                if seed_params is not None:
-                    self.angles, self.taus = seed_params
+            if seed_best_inf < best_inf:
+                best_inf = seed_best_inf
+                if seed_best_params is not None:
+                    self.angles, self.taus = seed_best_params
 
-        return best
+        return best_inf
 
-# =========================================================
-# Qiskit Translation (params_to_qiskit)
-# =========================================================
-def params_to_qiskit(angles: np.ndarray, taus: np.ndarray) -> QuantumCircuit:
-    """Convert the optimized angles and taus into a Qiskit QuantumCircuit using modern syntax."""
-    qc = QuantumCircuit(2)
-    m = taus.shape[0]
-    
-    for l in range(m):
+    def as_qiskit(self) -> QuantumCircuit:
+        if self.angles is None or self.taus is None:
+            raise ValueError("Run the synthesizer first.")
+            
+        qc = QuantumCircuit(2)
+        m = len(self.taus)
+        
+        # Local → RZZ → Local ... → Last Local
+        for l in range(m):
+            a = self.angles[l]
+            for q in range(2):
+                qc.rx(a[q, 0], q)
+                qc.ry(a[q, 1], q)
+                qc.rz(a[q, 2], q)
+            qc.rzz(self.taus[l], 0, 1)
+            
+        # Final local block
+        a = self.angles[-1]
         for q in range(2):
-            qc.rx(angles[l,q,0], q)
-            qc.ry(angles[l,q,1], q)
-            qc.rz(angles[l,q,2], q)
-        qc.rzz(taus[l], 0, 1)
-        
-    for q in range(2):
-        qc.rx(angles[-1,q,0], q)
-        qc.ry(angles[-1,q,1], q)
-        qc.rz(angles[-1,q,2], q)
-        
-    return qc
+            qc.rx(a[q, 0], q)
+            qc.ry(a[q, 1], q)
+            qc.rz(a[q, 2], q)
+            
+        return qc
 
 # =========================================================
 # === Qiskit Unitary Synthesis Plugin (The Wrapper)
 # =========================================================
 class PSFUnitarySynthesisPlugin(UnitarySynthesisPlugin):
     """
-    A Qiskit UnitarySynthesisPlugin implementation for PSF-Zero Ultimate.
-    Numerically synthesizes 2Q unitaries with KAK-style initialization for extreme speed.
+    A Qiskit UnitarySynthesisPlugin implementation for PSF-Zero Optimal v1.0.
+    Numerically synthesizes 2Q unitaries with KAK initialization, Cosine Annealing,
+    and end-game projective regularization for extreme fidelity.
     """
 
     @property
@@ -225,19 +232,13 @@ class PSFUnitarySynthesisPlugin(UnitarySynthesisPlugin):
         Synthesize a unitary matrix into a QuantumCircuit.
         Pass custom hyperparameters via the options dictionary.
         """
-        # Safely extract valid options for PSFHyper
-        valid_keys = {f.name for f in dataclasses.fields(PSFHyper)}
+        # Safely extract valid options for PSFHyper using dataclass fields
+        valid_keys = {f.name for f in fields(PSFHyper)}
         filtered_options = {k: v for k, v in options.items() if k in valid_keys}
         
-        # Initialize hyperparams and synthesizer
         hyper = PSFHyper(**filtered_options)
-        synth = PSFHybridSynthesizerUltimate(hyper)
+        synth = PSFHybridSynthesizerOptimal(hyper)
         
-        # Run the optimization
         synth.run(unitary)
         
-        if synth.angles is None or synth.taus is None:
-            raise RuntimeError("Synthesis failed to find a valid parameter set.")
-            
-        # Convert the best found parameters into a Qiskit circuit
-        return params_to_qiskit(synth.angles, synth.taus)
+        return synth.as_qiskit()
