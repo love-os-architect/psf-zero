@@ -83,6 +83,11 @@ Instead of applying a static geometric correction, the classical post-processing
 By converting physical noise into a learnable low-dimensional drift, the classical post-processor asymptotically suppresses the hardware-induced errors. While irreducible quantum noise (e.g., shot noise) remains at the theoretical limit, the directional hardware drift is actively canceled, drastically improving the signal-to-noise ratio without exponentially scaling the sampling overhead.
 
 
+[qiskit_gpcl_drift_learner.py](https://github.com/love-os-architect/psf-zero/blob/main/qiskit_gpcl_drift_learner.py)
+
+[examples/geometric_noise_learner.py](https://github.com/love-os-architect/psf-zero/blob/main/examples/geometric_noise_learner.py)
+
+
 ---
 
 ## 4. Mitigating Barren Plateaus (QML Perspective)
