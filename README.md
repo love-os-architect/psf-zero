@@ -64,6 +64,10 @@ print(optimized_qc.draw())
 
 PSF-Zero effectively solves the trade-off between Gate Fidelity ($F_{avg}$) and Control Dissipation. Check the included Jupyter Notebook (`01_psf_gate_calibration.ipynb`) to visualize the learning curve and convergence properties of the `PSFHybridSynthesizer`.
 
+[psf_synthesis.py](https://github.com/love-os-architect/psf-zero/blob/main/psf_synthesis.py)
+
+
+
 ## 📜 Citation
 
 If you use PSF-Zero in your quantum research or circuit optimization pipeline, please cite this repository using the included `CITATION.cff` or the following BibTeX:
