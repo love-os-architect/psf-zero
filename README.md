@@ -8,7 +8,7 @@
 
 Gauss’s *Theorema Egregium* proved that wrapping a sphere with flat paper inevitably creates wrinkles. Yet, modern quantum control still forces spherical quantum reality onto flat computational grids—generating the geometric wrinkles we call decoherence.
 
-**PSF-Zero** is a manifold-aware geometric optimizer and Qiskit `TransformationPass` designed to synthesize highly robust, low-dissipation 2-qubit unitary circuits. 
+**PSF-Zero** is a manifold-aware geometric optimizer and Qiskit `TransformationPass` designed to abandon the paper and operate directly on the sphere, synthesizing highly robust, low-dissipation 2-qubit unitary circuits.
 
 By applying Projective Spherical Filtering (the `/0` clamp) and restricting parameter updates to minimal arcs on the $S^3 \cong SU(2)$ manifold, PSF-Zero inherently minimizes pulse dissipation (L1/TV norms) while avoiding the catastrophic "unwinding" and barren plateaus common in classical Euclidean optimizers.
 
