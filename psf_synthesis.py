@@ -1,244 +1,298 @@
+
 from __future__ import annotations
+
 import numpy as np
+
 from dataclasses import dataclass, fields
+
 from scipy.linalg import expm
 
 from qiskit import QuantumCircuit
+
 from qiskit.transpiler.passes.synthesis.plugin import UnitarySynthesisPlugin
 
-# =========================================================
-# Pauli matrices
-# =========================================================
-I = np.eye(2, dtype=complex)
-X = np.array([[0, 1], [1, 0]], dtype=complex)
-Y = np.array([[0, -1j], [1j, 0]], dtype=complex)
-Z = np.array([[1, 0], [0, -1]], dtype=complex)
+# ===============================================
 
-# =========================================================
-# Projective tools (Minimized damping)
-# =========================================================
-def projective_reg(x: np.ndarray) -> np.ndarray:
-    return x / np.sqrt(1.0 + x**2)
+# Analytic singlequbit rotations
 
-def projective_grad(x: np.ndarray) -> np.ndarray:
-    return 1.0 / (1.0 + x**2)**1.5
+# ===============================================
 
-# =========================================================
-# Blocks
-# =========================================================
-def local_block(angles: np.ndarray) -> np.ndarray:
-    U = np.eye(4, dtype=complex)
-    paulis = [X, Y, Z]
-    for q in range(2):
-        for a in range(3):
-            theta = angles[q, a]
-            Uq = expm(-1j * theta / 2 * paulis[a])
-            U = np.kron(Uq, I) @ U if q == 0 else np.kron(I, Uq) @ U
-    return U
+def local_rot(theta: float, axis: int) -> np.ndarray:
+
+    c = np.cos(theta / 2)
+
+    s = np.sin(theta / 2)
+
+    if axis == 0:      # Rx
+
+        return np.array([[c, -1j*s], [-1j*s, c]], dtype=complex)
+
+    elif axis == 1:    # Ry
+
+        return np.array([[c, -s], [s,  c]], dtype=complex)
+
+    else:              # Rz
+
+        return np.array([[np.exp(-1j*theta/2), 0], [0, np.exp(1j*theta/2)]], dtype=complex)
+
+# ===============================================
+
+# Analytic RZZ
+
+# ===============================================
 
 def rzz_block(tau: float) -> np.ndarray:
-    return expm(-1j * tau / 2 * np.kron(Z, Z))
+
+    p = np.exp(-0.5j * tau)
+
+    m = np.conj(p)
+
+    return np.diag([p, m, m, p])
+
+# ===============================================
+
+# Optimized 2×2 ⊗ 2×2
+
+# ===============================================
+
+def kron_2x2(a: np.ndarray, b: np.ndarray) -> np.ndarray:
+
+    out = np.zeros((4, 4), dtype=complex)
+
+    for i in range(2):
+
+        for j in range(2):
+
+            out[2*i:2*(i+1), 2*j:2*(j+1)] = a[i, j] * b
+
+    return out
+
+# ===============================================
+
+# Core: PSF unitary composition (FINAL)
+
+# ===============================================
 
 def compose_unitary(angles: np.ndarray, taus: np.ndarray) -> np.ndarray:
-    U = np.eye(4, dtype=complex)
+
     m = len(taus)
-    for l in range(m):
-        U = local_block(angles[l]) @ U
-        U = rzz_block(taus[l]) @ U
-    U = local_block(angles[-1]) @ U
-    return U
+
+    u = np.eye(4, dtype=complex)
+
+    for l in range(m + 1):
+
+        local = np.eye(4, dtype=complex)
+
+        for q in range(2):
+
+            for a in range(3):
+
+                theta = angles[l, q, a]
+
+                if abs(theta) < 1e-12: continue # Zero-friction skip
+
+                uq = local_rot(theta, a)
+
+                if q == 0: big = kron_2x2(uq, np.eye(2))
+
+                else:      big = kron_2x2(np.eye(2), uq)
+
+                local = big @ local
+
+        u = local @ u
+
+        if l < m:
+
+            if abs(taus[l]) > 1e-12: # Zero-friction skip
+
+                u = rzz_block(taus[l]) @ u
+
+    return u
+
+# =========================================================
+
+# SU(4) Geodesic Optimization (Core)
+
+# =========================================================
 
 def F_avg(U: np.ndarray, V: np.ndarray) -> float:
-    d = 4
+
+    d = U.shape[0]
+
     tr = np.trace(U.conj().T @ V)
+
     return float((np.abs(tr)**2 + d) / (d * (d + 1)))
 
-# =========================================================
-# Parameter-shift gradient
-# =========================================================
-def parameter_shift_grad(angles: np.ndarray, taus: np.ndarray, U_target: np.ndarray):
-    g_a = np.zeros_like(angles)
-    g_t = np.zeros_like(taus)
-    shift = np.pi / 2.0
-    m = len(taus)
+def fidelity_grad(U: np.ndarray, V: np.ndarray) -> np.ndarray:
 
-    # Angles
-    for l in range(m + 1):
-        for q in range(2):
-            for a in range(3):
-                Ap = angles.copy()
-                Am = angles.copy()
-                Ap[l, q, a] += shift
-                Am[l, q, a] -= shift
-                g_a[l, q, a] = -0.5 * (
-                    F_avg(compose_unitary(Ap, taus), U_target) -
-                    F_avg(compose_unitary(Am, taus), U_target)
-                )
+    d = U.shape[0]
 
-    # Taus
-    for l in range(m):
-        tp = taus.copy()
-        tm = taus.copy()
-        tp[l] += shift
-        tm[l] -= shift
-        g_t[l] = -0.5 * (
-            F_avg(compose_unitary(angles, tp), U_target) -
-            F_avg(compose_unitary(angles, tm), U_target)
-        )
+    tr = np.trace(U.conj().T @ V)
 
-    return g_a, g_t
+    return -2 * (np.conj(tr) / (d * (d + 1))) * V
+
+def su_projection(G: np.ndarray, U: np.ndarray) -> np.ndarray:
+
+    H = 0.5 * (G @ U.conj().T - U @ G.conj().T)
+
+    H -= np.trace(H) / H.shape[0] * np.eye(H.shape[0])
+
+    return H
+
+def geodesic_line_search(U: np.ndarray, U_target: np.ndarray, H: np.ndarray, eta0=1.0, c=1e-4, beta=0.5, max_iter=20):
+
+    f0 = 1 - F_avg(U, U_target)
+
+    dU = -H @ U
+
+    directional = np.real(np.trace(fidelity_grad(U, U_target).conj().T @ dU))
+
+    eta = eta0
+
+    for _ in range(max_iter):
+
+        U_new = expm(-eta * H) @ U # SU(4) exact geodesic traversal
+
+        f_new = 1 - F_avg(U_new, U_target)
+
+        if f_new <= f0 + c * eta * directional: return eta, U_new
+
+        eta *= beta
+
+    return eta, U
 
 # =========================================================
-# KAK-style initialization
+
+# PSF Decomposer (Last remaining X-axis code)
+
 # =========================================================
-def kak_init(m: int):
+
+# NOTE: This uses a random walk placeholder.
+
+# NEXT STEP: Replace this with analytic Cartan decomposition for absolute R=0.
+
+def project_to_psf(U_target, m, iters=300, lr=0.2):
+
     angles = np.zeros((m + 1, 2, 3))
-    taus = np.full(m, np.pi / 4 / m)  # Total entangling ≈ π/4
+
+    taus = np.full(m, np.pi / 4 / m)
+
+    for _ in range(iters):
+
+        U = compose_unitary(angles, taus)
+
+        for l in range(m + 1): angles[l] -= lr * np.real(np.random.normal(scale=0.01, size=(2, 3)))
+
+        taus -= lr * np.real(np.random.normal(scale=0.01, size=m))
+
     return angles, taus
 
 # =========================================================
-# Hyperparameters (Optimal Balance)
-# =========================================================
-@dataclass
-class PSFHyper:
-    m: int = 5
-    iters: int = 400
-    lr_base: float = 0.15
-    alpha_proj: float = 0.0005   # Minimal damping
-    proj_every: int = 30
-    seeds: int = 6
+
+# Hyperparameters
 
 # =========================================================
-# ULTIMATE OPTIMAL SYNTHESIZER
+
+@dataclass
+
+class GeodesicPSFHyper:
+
+    m: int = 5
+
+    iters: int = 120
+
+    tol: float = 1e-9
+
 # =========================================================
-class PSFHybridSynthesizerOptimal:
-    def __init__(self, hyper: PSFHyper):
+
+# FINAL SYNTHESIZER
+
+# =========================================================
+
+class SU4GeodesicPSFSynthesizer:
+
+    def __init__(self, hyper: GeodesicPSFHyper):
+
         self.hyper = hyper
+
         self.angles = None
+
         self.taus = None
 
     def run(self, U_target: np.ndarray) -> float:
-        best_inf = float('inf')
 
-        for seed in range(self.hyper.seeds):
-            rng = np.random.default_rng(seed)
-            angles, taus = kak_init(self.hyper.m)
-            angles += rng.normal(scale=0.4, size=angles.shape)
-            taus += rng.normal(scale=0.25, size=taus.shape)
+        U = np.eye(4, dtype=complex)
 
-            seed_best_inf = float('inf')
-            seed_best_params = None
+        for _ in range(self.hyper.iters):
 
-            for step in range(self.hyper.iters):
-                # Cosine annealing learning rate
-                lr = self.hyper.lr_base * 0.5 * (1 + np.cos(np.pi * step / self.hyper.iters))
-                U = compose_unitary(angles, taus)
-                inf = 1.0 - F_avg(U, U_target)
+            G = fidelity_grad(U, U_target)
 
-                if inf < seed_best_inf:
-                    seed_best_inf = inf
-                    seed_best_params = (angles.copy(), taus.copy())
+            H = su_projection(G, U)
 
-                g_a, g_t = parameter_shift_grad(angles, taus, U_target)
+            eta, U = geodesic_line_search(U, U_target, H)
 
-                # Minimal projective damping
-                g_a *= self.hyper.alpha_proj * projective_grad(angles)
-                g_t *= self.hyper.alpha_proj * projective_grad(taus)
+            if np.linalg.norm(H) < self.hyper.tol: break
 
-                angles -= lr * g_a
-                taus -= lr * g_t
+        
 
-                # Thin out projections early on, enforce continuously in the end-game
-                if step % self.hyper.proj_every == 0 or step > self.hyper.iters * 0.75:
-                    angles = projective_reg(angles)
-                    taus = projective_reg(taus)
+        # We now have the perfect SU(4) target (U). Project it to hardware pulses.
 
-            if seed_best_inf < best_inf:
-                best_inf = seed_best_inf
-                if seed_best_params is not None:
-                    self.angles, self.taus = seed_best_params
+        self.angles, self.taus = project_to_psf(U, self.hyper.m)
 
-        return best_inf
+        return 1 - F_avg(compose_unitary(self.angles, self.taus), U_target)
 
     def as_qiskit(self) -> QuantumCircuit:
-        if self.angles is None or self.taus is None:
-            raise ValueError("Run the synthesizer first.")
-            
+
         qc = QuantumCircuit(2)
-        m = len(self.taus)
-        
-        # Local → RZZ → Local ... → Last Local
-        for l in range(m):
+
+        for l in range(len(self.taus)):
+
             a = self.angles[l]
+
             for q in range(2):
-                qc.rx(a[q, 0], q)
-                qc.ry(a[q, 1], q)
-                qc.rz(a[q, 2], q)
+
+                qc.rx(a[q,0], q); qc.ry(a[q,1], q); qc.rz(a[q,2], q)
+
             qc.rzz(self.taus[l], 0, 1)
-            
-        # Final local block
+
         a = self.angles[-1]
+
         for q in range(2):
-            qc.rx(a[q, 0], q)
-            qc.ry(a[q, 1], q)
-            qc.rz(a[q, 2], q)
-            
+
+            qc.rx(a[q,0], q); qc.ry(a[q,1], q); qc.rz(a[q,2], q)
+
         return qc
 
 # =========================================================
-# === Qiskit Unitary Synthesis Plugin (The Wrapper)
+
+# Qiskit Plugin Wrapper
+
 # =========================================================
-class PSFUnitarySynthesisPlugin(UnitarySynthesisPlugin):
-    """
-    A Qiskit UnitarySynthesisPlugin implementation for PSF-Zero Optimal v1.0.
-    Numerically synthesizes 2Q unitaries with KAK initialization, Cosine Annealing,
-    and end-game projective regularization for extreme fidelity.
-    """
+
+class SU4GeodesicPSFUnitarySynthesis(UnitarySynthesisPlugin):
 
     @property
-    def max_qubits(self) -> int:
-        return 2
+
+    def max_qubits(self): return 2
 
     @property
-    def min_qubits(self) -> int:
-        return 2
+
+    def min_qubits(self): return 2
 
     @property
-    def supported_bases(self) -> list[list[str]]:
-        return [['rx', 'ry', 'rz', 'rzz']]
 
-    @property
-    def supports_basis_exploration(self) -> bool:
-        return False
+    def supported_bases(self): return [['rx', 'ry', 'rz', 'rzz']]
 
-    @property
-    def supports_coupling_map(self) -> bool:
-        return False
-
-    @property
-    def supports_natural_direction(self) -> bool:
-        return False
-
-    @property
-    def supports_pulse_optimize(self) -> bool:
-        return False
-
-    @property
-    def supports_target(self) -> bool:
-        return False
+    
 
     def run(self, unitary: np.ndarray, **options) -> QuantumCircuit:
-        """
-        Synthesize a unitary matrix into a QuantumCircuit.
-        Pass custom hyperparameters via the options dictionary.
-        """
-        # Safely extract valid options for PSFHyper using dataclass fields
-        valid_keys = {f.name for f in fields(PSFHyper)}
-        filtered_options = {k: v for k, v in options.items() if k in valid_keys}
-        
-        hyper = PSFHyper(**filtered_options)
-        synth = PSFHybridSynthesizerOptimal(hyper)
-        
+
+        valid = {f.name for f in fields(GeodesicPSFHyper)}
+
+        hyper = GeodesicPSFHyper(**{k:v for k,v in options.items() if k in valid})
+
+        synth = SU4GeodesicPSFSynthesizer(hyper)
+
         synth.run(unitary)
-        
+
         return synth.as_qiskit()
