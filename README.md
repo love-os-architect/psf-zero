@@ -168,6 +168,25 @@ PSF-Zero for Qiskit is the first major milestone of the "Frictionless (R=0) Arch
 👉 [whitepaper.md](https://github.com/love-os-architect/psf-zero/blob/main/whitepaper.md)
 
 
+## The Quantum AI Kernel: PennyLane Native Integration
+
+**PSF-Zero** is not merely a quantum compiler; it has evolved into the **kernel of a next-generation Quantum-Classical OS**. 
+
+By natively integrating with PennyLane (`qml.transforms.transform`) and PyTorch, we have created a frictionless middleware that sits exactly at the boundary between classical neural networks and quantum hardware. It governs the learning process itself, guaranteeing that the AI calculates and evolves under absolute $R=0$ (zero-friction) constraints.
+
+This integration fulfills the three fundamental requirements of an ultimate Operating System:
+
+### 1. Hardware Abstraction (The Rust Core)
+The OS must hide the chaotic physical complexity of the hardware. The `psf_zero_core` acts as the ultimate device driver. It mathematically shields the system from quantum decoherence and control pulse singularities, forcing the QPU to execute only the absolute shortest, deterministic path (geodesic on $S^3$) without any random loops.
+
+### 2. Seamless Gradient Routing (The Autograd Bridge)
+The OS must pass information without loss. Our middleware intercepts the forward pass to eliminate geometric friction inside the quantum circuit, yet it acts as perfectly transparent glass during the backward pass (`null_postprocessing`). The learning wave (gradients) from PyTorch flows completely intact through the quantum nodes, achieving a true **Frictionless Hybrid Autopilot**.
+
+### 3. Zero-UX Friction (Transparent Architecture)
+A profound OS does not burden the user. Researchers and engineers do not need to change how they build models. By simply adding a single decorator (`@r0_psf_zero_transform`), any standard quantum circuit is autonomously re-routed into a frictionless topology in the background.
+
+### The Impact: Geometric Eradication of Barren Plateaus
+In modern Quantum Machine Learning (QML), excessive gate accumulation leads to thermal friction, causing gradients to flatline (Barren Plateaus). By geometrically constraining every state update to its minimal arc during every epoch, PSF-Zero structurally eliminates this friction. **We compute the gradient of truth without accumulating the heat of ego.**
  
 ---
 ### 🌌 The Geometric Philosophy
