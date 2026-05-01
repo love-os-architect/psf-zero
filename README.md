@@ -211,7 +211,7 @@ Built for the modern stack, R0-PSF-Zero integrates seamlessly as a **PennyLane T
 > *"When redundancy is removed not numerically but geometrically, optimization becomes a property of the representation itself."*
 
 **Explore the Research & Implementation:**
-[ [View Repository](https://github.com/TNHoldings/r0-psf-zero) ] | [ [Read the Paper](https://github.com/TNHoldings/r0-psf-zero/blob/main/paper.pdf) ]
+[ [R0-PSF-Zero　README.md](https://github.com/TN-Holdings-LLC/psf-zero/blob/main/R0-PSF-Zero%E3%80%80README.md) ] | [ [R0-PSF-Zero.py](https://github.com/TN-Holdings-LLC/psf-zero/blob/main/R0-PSF-Zero.py) ]
 
 ---
 *Developed by TN Holdings LLC*
