@@ -191,6 +191,8 @@ project Target + Geometry + Hardware -> U_opt;
 ```
 In QGL, there are no heuristic search loops, no random seeds, and no syntax errors. There is only Geometric Satisfiability. If a state is unreachable, the compiler returns the exact minimal Cartan distance, transforming errors into physical knowledge.
 
+[qgl_compiler.py](https://github.com/TN-Holdings-LLC/psf-zero/blob/main/qgl_compiler.py)
+
 ---
 ## 🌍 Next Steps & Ecosystem Expansion
 
