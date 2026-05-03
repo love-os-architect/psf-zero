@@ -157,8 +157,41 @@ The transition from the Python execution to the Rust native core requires zero a
 # Import the frictionless Rust core:
 from psf_zero_core import compose_unitary_rs as compose_unitary
 ```
+## 🌌 QGL: Quantum Geometric Language (The Final Layer)
 
+> **"Execution is not a sequence of steps. It is a deterministic geometric projection."**
 
+With the stabilization of the Rust core, **PSF-Zero** has evolved from a transpiler pass into the first reference compiler for **QGL (Quantum Geometric Language)**.
+
+QGL is the final semantic layer for quantum computation. It abandons Turing-completeness and sequential execution entirely. Instead, it describes quantum operations purely as intersections of mathematical constraints (Local Equivalence, Weyl Geometry, and Hardware Basis). 
+
+In QGL, execution is redefined as the absolute minimization of the Cartan action:
+$$ \mathcal{L}(U) = d_{\text{Cartan}}(U, U_{\text{target}})^2 + \lambda_1 \cdot \text{GateCost}(U) + \lambda_2 \cdot \text{Depth}(U) + \lambda_3 \cdot \text{Penalty}(U) $$
+
+### The Canonical Selection Principle
+A QGL program does not instruct the hardware *how* to build a circuit. It declares *where* the state must reside in the SU(4) geometry. The `psf_zero_core` algebraically projects these constraints into a mathematically unique canonical circuit in $O(1)$ time.
+
+**Example QGL Specification:**
+```text
+system TwoQubit {
+    qubit q0;
+    qubit q1;
+}
+
+constraint Target:
+    local_equivalence(CNOT);
+
+constraint Geometry:
+    weyl(0.2, 0.1, 0.05);
+
+constraint Hardware:
+    basis(IsingXX, IsingYY, IsingZZ);
+
+project Target + Geometry + Hardware -> U_opt;
+```
+In QGL, there are no heuristic search loops, no random seeds, and no syntax errors. There is only Geometric Satisfiability. If a state is unreachable, the compiler returns the exact minimal Cartan distance, transforming errors into physical knowledge.
+
+---
 ## 🌍 Next Steps & Ecosystem Expansion
 
 PSF-Zero for Qiskit is the first major milestone of the "Frictionless (R=0) Architecture." The next phase of deployment is actively underway and includes:
